@@ -312,7 +312,7 @@ portBASE_TYPE xPortSetInterruptMask( void )
 }
 /*-----------------------------------------------------------*/
 
-void vPortClearInterruptMask( portBASE_TYPE xMask )
+void vPortClearInterruptMask( __attribute__( ( unused ) ) portBASE_TYPE xMask )
 {
 }
 /*-----------------------------------------------------------*/
@@ -366,7 +366,7 @@ int iRet;
 }
 /*-----------------------------------------------------------*/
 
-static void vPortSystemTickHandler( int sig )
+static void vPortSystemTickHandler( __attribute__( ( unused ) ) int sig )
 {
 Thread_t *pxThreadToSuspend;
 Thread_t *pxThreadToResume;
@@ -403,7 +403,7 @@ Thread_t *pxThreadToResume;
 }
 /*-----------------------------------------------------------*/
 
-void vPortThreadDying( void *pxTaskToDelete, volatile BaseType_t *pxPendYield )
+void vPortThreadDying( void *pxTaskToDelete, __attribute__( ( unused ) ) volatile BaseType_t *pxPendYield )
 {
 Thread_t *pxThread = prvGetThreadFromTask( pxTaskToDelete );
 
