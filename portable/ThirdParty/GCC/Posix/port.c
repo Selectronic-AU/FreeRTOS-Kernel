@@ -69,7 +69,6 @@
 /* Scheduler includes. */
 #include "FreeRTOS.h"
 #include "task.h"
-#include "list.h"
 #include "timers.h"
 #include "utils/wait_for_event.h"
 /*-----------------------------------------------------------*/
@@ -83,7 +82,6 @@ typedef struct THREAD
     void * pvParams;
     BaseType_t xDying;
     struct event * ev;
-    ListItem_t xThreadListItem;
 } Thread_t;
 
 /*
@@ -108,7 +106,6 @@ static BaseType_t xSchedulerEnd = pdFALSE;
 static pthread_t hTimerTickThread;
 static bool xTimerTickThreadShouldRun;
 static uint64_t prvStartTimeNs;
-static List_t xThreadList;
 /*-----------------------------------------------------------*/
 
 static void prvSetupSignalsAndSchedulerPolicy( void );
@@ -182,13 +179,7 @@ StackType_t * pxPortInitialiseStack( StackType_t * pxTopOfStack,
 
     thread->ev = event_create();
 
-    vListInitialiseItem( &thread->xThreadListItem );
-    listSET_LIST_ITEM_OWNER( &thread->xThreadListItem, thread );
-
     vPortEnterCritical();
-
-    /* Add the new thread in xThreadList. */
-    vListInsertEnd( &xThreadList, &thread->xThreadListItem );
 
     iRet = pthread_create( &thread->pthread, &xThreadAttributes,
                            prvWaitForStart, thread );
@@ -220,8 +211,6 @@ BaseType_t xPortStartScheduler( void )
 {
     int iSignal;
     sigset_t xSignals;
-    ListItem_t * pxIterator;
-    const ListItem_t * pxEndMarker;
 
     hMainThread = pthread_self();
 
@@ -247,19 +236,6 @@ BaseType_t xPortStartScheduler( void )
         sigwait( &xSignals, &iSignal );
     }
 
-    /* Cancel all the running thread. */
-    pxEndMarker = listGET_END_MARKER( &xThreadList );
-
-    for( pxIterator = listGET_HEAD_ENTRY( &xThreadList ); pxIterator != pxEndMarker; pxIterator = listGET_NEXT( pxIterator ) )
-    {
-        Thread_t * pxThread = ( Thread_t * ) listGET_LIST_ITEM_OWNER( pxIterator );
-
-        pthread_cancel( pxThread->pthread );
-        event_signal( pxThread->ev );
-        pthread_join( pxThread->pthread, NULL );
-        event_delete( pxThread->ev );
-    }
-
     /*
      * clear out the variable that is used to end the scheduler, otherwise
      * subsequent scheduler restarts will end immediately.
@@ -279,6 +255,8 @@ BaseType_t xPortStartScheduler( void )
 
 void vPortEndScheduler( void )
 {
+    Thread_t * pxCurrentThread;
+
     /* Stop the timer tick thread. */
     xTimerTickThreadShouldRun = false;
     pthread_join( hTimerTickThread, NULL );
@@ -287,7 +265,10 @@ void vPortEndScheduler( void )
     xSchedulerEnd = pdTRUE;
     ( void ) pthread_kill( hMainThread, SIG_RESUME );
 
-    pthread_exit( NULL );
+    /* Waiting to be deleted here. */
+    pxCurrentThread = prvGetThreadFromTask( xTaskGetCurrentTaskHandle() );
+    event_wait( pxCurrentThread->ev );
+    pthread_testcancel();
 }
 /*-----------------------------------------------------------*/
 
@@ -468,11 +449,6 @@ void vPortCancelThread( void * pxTaskToDelete )
 {
     Thread_t * pxThreadToCancel = prvGetThreadFromTask( pxTaskToDelete );
 
-    /* Remove the thread from xThreadList. */
-    vPortEnterCritical();
-    uxListRemove( &pxThreadToCancel->xThreadListItem );
-    vPortExitCritical();
-
     /*
      * The thread has already been suspended so it can be safely cancelled.
      */
@@ -573,9 +549,6 @@ static void prvSetupSignalsAndSchedulerPolicy( void )
     int iRet;
 
     hMainThread = pthread_self();
-
-    /* Setup thread list to record all the task which are not deleted. */
-    vListInitialise( &xThreadList );
 
     /* Initialise common signal masks. */
     sigfillset( &xAllSignals );
